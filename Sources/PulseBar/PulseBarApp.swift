@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 import SwiftUI
 
 @main
@@ -29,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
     private let popover = NSPopover()
     private var window: NSWindow?
     private var mainWindowRequested = false
+    private let windowLog = Logger(subsystem:Bundle.main.bundleIdentifier ?? "com.fei.pulsebar",category:"WindowLifecycle")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength:NSStatusItem.variableLength)
@@ -62,6 +64,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
 
     func applicationDidBecomeActive(_ notification: Notification) {
         restoreMainWindowFocus()
+        logWindowState("became-active")
+    }
+
+    func applicationDidResignActive(_ notification: Notification) {
+        logWindowState("resigned-active")
     }
 
     func popoverDidClose(_ notification: Notification) {
@@ -70,7 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
 
     private func restoreMainWindowFocus() {
         guard mainWindowRequested, !popover.isShown, NSApp.isActive, !NSApp.isHidden,
-              let window, window.isVisible, !window.isMiniaturized else { return }
+              let window, !window.isMiniaturized else { return }
         if let sheet = window.attachedSheet {
             sheet.makeKeyAndOrderFront(nil)
         } else {
@@ -81,6 +88,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
     func windowWillClose(_ notification: Notification) {
         guard let closing = notification.object as? NSWindow, closing === window else { return }
         mainWindowRequested = false
+        logWindowState("closed")
+        // Wait until AppKit finishes closing; a rapid reopen must keep regular activation.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.mainWindowRequested else { return }
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+
+    private func logWindowState(_ event: String) {
+        windowLog.info("\(event,privacy:.public) policy=\(NSApp.activationPolicy().rawValue) requested=\(self.mainWindowRequested) active=\(NSApp.isActive) hidden=\(NSApp.isHidden) visible=\(self.window?.isVisible ?? false) key=\(self.window?.isKeyWindow ?? false)")
+    }
+
+    private func installMainMenuIfNeeded() {
+        guard NSApp.mainMenu == nil else { return }
+        let menu = NSMenu()
+        let appItem = NSMenuItem(), appMenu = NSMenu(title:"Piko")
+        appMenu.addItem(withTitle:"隐藏 Piko",action:#selector(NSApplication.hide(_:)),keyEquivalent:"h")
+        appMenu.addItem(withTitle:"显示全部",action:#selector(NSApplication.unhideAllApplications(_:)),keyEquivalent:"")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle:"退出 Piko",action:#selector(NSApplication.terminate(_:)),keyEquivalent:"q")
+        appItem.submenu = appMenu; menu.addItem(appItem)
+        let windowItem = NSMenuItem(), windowMenu = NSMenu(title:"窗口")
+        windowMenu.addItem(withTitle:"关闭窗口",action:#selector(NSWindow.performClose(_:)),keyEquivalent:"w")
+        windowMenu.addItem(withTitle:"最小化",action:#selector(NSWindow.performMiniaturize(_:)),keyEquivalent:"m")
+        windowMenu.addItem(withTitle:"缩放",action:#selector(NSWindow.performZoom(_:)),keyEquivalent:"")
+        windowItem.submenu = windowMenu; menu.addItem(windowItem)
+        NSApp.mainMenu = menu; NSApp.windowsMenu = windowMenu
     }
 
     private func refreshStatus() {
@@ -120,6 +154,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
 
     @objc private func showWindow() {
         mainWindowRequested = true
+        // A persistent workspace must be a regular app, not an accessory whose
+        // activation can return to the previous app after a system permission prompt.
+        installMainMenuIfNeeded()
+        NSApp.setActivationPolicy(.regular)
         popover.performClose(nil)
         if window == nil {
             let size = NSSize(width:min(980,(NSScreen.main?.visibleFrame.width ?? 1100)-80),height:min(760,(NSScreen.main?.visibleFrame.height ?? 840)-60))
@@ -129,12 +167,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
             w.isOpaque = false; w.backgroundColor = .clear
             w.isReleasedWhenClosed = false
             w.hidesOnDeactivate = false
+            w.collectionBehavior = [.managed,.primary,.participatesInCycle,.fullScreenPrimary]
             w.delegate = self
             w.minSize = NSSize(width:780,height:580)
             w.contentViewController = NSHostingController(rootView:DashboardView(model:model,detach:{ [weak self] in
                 self?.mainWindowRequested = false
                 self?.window?.orderOut(nil)
+                NSApp.setActivationPolicy(.accessory)
                 self?.togglePanel()
+                self?.logWindowState("collapsed")
             }))
             w.setContentSize(size)
             w.center(); window = w
@@ -142,12 +183,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
             refreshStatus()
         }
         // Activation is asynchronous. Restore ordering again when AppKit confirms it.
+        NSApp.unhide(nil)
         NSApp.activate(ignoringOtherApps:true)
         if window?.isMiniaturized == true { window?.deminiaturize(nil) }
         // Explicit open requests must be visible even while activation is pending.
         // This changes ordering once, not the window's level or always-on-top behavior.
         window?.orderFrontRegardless()
         restoreMainWindowFocus()
+        logWindowState("opened")
         DispatchQueue.main.async { [weak self] in self?.restoreMainWindowFocus() }
     }
     func applicationWillTerminate(_ notification: Notification) { model.stopAwake() }

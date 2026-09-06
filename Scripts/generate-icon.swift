@@ -1,37 +1,38 @@
-import AppKit
+import Foundation
+import ImageIO
 
-let output = CommandLine.arguments[1]
-let iconset = URL(fileURLWithPath:output).appendingPathComponent("AppIcon.iconset")
-try FileManager.default.createDirectory(at:iconset,withIntermediateDirectories:true)
-for size in [16,32,128,256,512] {
-    for scale in [1,2] {
-        let pixels = size * scale
-        let image = NSImage(size:NSSize(width:pixels,height:pixels))
-        image.lockFocus()
-        let context = NSGraphicsContext.current!.cgContext
-        context.scaleBy(x:CGFloat(pixels)/1024,y:CGFloat(pixels)/1024)
-        let bounds = CGRect(x:72,y:72,width:880,height:880)
-        let shape = CGPath(roundedRect:bounds,cornerWidth:196,cornerHeight:196,transform:nil)
-        context.setFillColor(NSColor(srgbRed:0.0596,green:0.4321,blue:0.3179,alpha:1).cgColor)
-        context.addPath(shape); context.fillPath()
-        context.setStrokeColor(NSColor.white.withAlphaComponent(0.13).cgColor)
-        context.setLineWidth(3)
-        context.addPath(CGPath(roundedRect:bounds.insetBy(dx:22,dy:22),cornerWidth:176,cornerHeight:176,transform:nil)); context.strokePath()
-        let pulse = CGMutablePath()
-        pulse.move(to:CGPoint(x:218,y:486)); pulse.addLine(to:CGPoint(x:362,y:486))
-        pulse.addLine(to:CGPoint(x:429,y:647)); pulse.addLine(to:CGPoint(x:519,y:343))
-        pulse.addLine(to:CGPoint(x:610,y:560)); pulse.addLine(to:CGPoint(x:675,y:486)); pulse.addLine(to:CGPoint(x:806,y:486))
-        context.addPath(pulse); context.setStrokeColor(NSColor.white.cgColor)
-        context.setLineWidth(43); context.setLineCap(.round); context.setLineJoin(.round); context.strokePath()
-        image.unlockFocus()
-        let bitmap = NSBitmapImageRep(data:image.tiffRepresentation!)!
-        let filename = "icon_\(size)x\(size)\(scale == 2 ? "@2x" : "").png"
-        try bitmap.representation(using:.png,properties:[:])!.write(to:iconset.appendingPathComponent(filename))
-    }
+enum IconError: Error { case invalidArguments, invalidSource, compilationFailed, missingOutput }
+
+guard CommandLine.arguments.count == 2 else { throw IconError.invalidArguments }
+let output = URL(fileURLWithPath:CommandLine.arguments[1],isDirectory:true)
+let icon = URL(fileURLWithPath:#filePath).deletingLastPathComponent().deletingLastPathComponent()
+    .appendingPathComponent("AppBundle/Assets/AppIcon.icon",isDirectory:true)
+guard let source = CGImageSourceCreateWithURL(icon.appendingPathComponent("Assets/Piko.png") as CFURL,nil),
+      let original = CGImageSourceCreateImageAtIndex(source,0,nil),
+      original.width == original.height, original.width >= 1024,
+      [CGImageAlphaInfo.none,.noneSkipFirst,.noneSkipLast].contains(original.alphaInfo) else {
+    throw IconError.invalidSource
 }
+let manager = FileManager.default
+let temporary = manager.temporaryDirectory.appendingPathComponent("Piko-Icon-\(UUID().uuidString)",isDirectory:true)
+try manager.createDirectory(at:temporary,withIntermediateDirectories:true)
+defer { try? manager.removeItem(at:temporary) }
+
+// Ship the native icon stack as well as the legacy fallback, avoiding Tahoe's legacy-icon plate.
 let process = Process()
-process.executableURL = URL(fileURLWithPath:"/usr/bin/iconutil")
-process.arguments = ["-c","icns",iconset.path,"-o",URL(fileURLWithPath:output).appendingPathComponent("AppIcon.icns").path]
+process.executableURL = URL(fileURLWithPath:"/usr/bin/xcrun")
+process.arguments = ["actool",icon.path,"--compile",temporary.path,
+    "--output-format","human-readable-text","--notices","--warnings","--errors",
+    "--output-partial-info-plist",temporary.appendingPathComponent("Info.plist").path,
+    "--app-icon","AppIcon","--include-all-app-icons","--enable-on-demand-resources","NO",
+    "--development-region","en","--target-device","mac",
+    "--minimum-deployment-target","14.0","--platform","macosx"]
 try process.run(); process.waitUntilExit()
-guard process.terminationStatus == 0 else { fatalError("Icon generation failed") }
-try FileManager.default.removeItem(at:iconset)
+guard process.terminationStatus == 0 else { throw IconError.compilationFailed }
+
+try manager.createDirectory(at:output,withIntermediateDirectories:true)
+for name in ["AppIcon.icns","Assets.car"] {
+    let data = try Data(contentsOf:temporary.appendingPathComponent(name))
+    guard !data.isEmpty else { throw IconError.missingOutput }
+    try data.write(to:output.appendingPathComponent(name),options:.atomic)
+}

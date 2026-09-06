@@ -12,6 +12,8 @@ Click the waveform in the menu bar for the live dashboard. Right-click it for qu
 
 The menu bar separates labels and values with a half-em space rather than dots or hyphens. Normal values stay neutral. CPU, GPU and memory usage turn yellow at 80% and red at 90%; elevated system memory pressure can also escalate the indication. Startup disk available capacity turns yellow at 15% remaining and red at 10% remaining. Network speed is not treated as a warning. Colors adapt to the system menu-bar appearance independently of the panel theme.
 
+The main window behaves as a regular macOS application with a Dock entry and standard Hide, Close and Minimize actions. Closing it or collapsing it into the menu bar returns Piko to menu-bar-only mode without quitting monitoring. Permission dialogs and folder-selection sheets do not intentionally close the workspace or clear its results.
+
 - CPU total, individual cores, load averages, GPU activity when available.
 - Application, wired, compressed and cached memory, pressure and swap.
 - Startup data volume, external volumes, available capacity and physical device I/O.
@@ -34,7 +36,7 @@ History starts empty and resets on exit. Network is counted on the primary inter
 
 ## Build
 
-The app runs on macOS 14 or later. Building requires Xcode 26 or matching Command Line Tools with the macOS 26 SDK and Swift 6, including the SDK definitions for controls guarded by availability checks.
+The app runs on macOS 14 or later. Building the app bundle requires full Xcode 26 or later, including the macOS 26 SDK, Swift 6 and `actool` for the native Icon Composer resource. Command Line Tools alone can compile/test Swift sources but cannot package the native app icon.
 
 ```sh
 swift test -j 4
