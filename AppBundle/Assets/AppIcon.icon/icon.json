@@ -1,13 +1,13 @@
 {
   "fill" : {
-    "automatic-gradient" : "extended-srgb:0.00000,0.53333,1.00000,1.00000"
+    "automatic-gradient" : "extended-srgb:0.88627,0.93333,0.91765,1.00000"
   },
   "groups" : [
     {
       "layers" : [
         {
           "image-name" : "Piko.png",
-          "name" : "Piko Artwork"
+          "name" : "Piko Little Lookout"
         }
       ],
       "shadow" : {
